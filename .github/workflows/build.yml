@@ -5,34 +5,49 @@ on:
   pull_request:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
+      - name: Unpack zip archives (if pom.xml is missing)
+        run: |
+          if [ -z "$(find . -name pom.xml -not -path './.git/*' | head -n 1)" ]; then
+            mkdir -p _unpacked
+            find . -iname '*.zip' -not -path './.git/*' -not -path './_unpacked/*' -print0 |
+              while IFS= read -r -d '' z; do
+                unzip -oq "$z" -d _unpacked || true
+              done
+          fi
+
+      - name: Locate project
+        id: locate
+        run: |
+          POM=$(find . -name pom.xml -not -path './.git/*' -not -path '*/target/*' | head -n 1)
+          if [ -z "$POM" ]; then
+            echo "::error::pom.xml не найден"
+            exit 1
+          fi
+          echo "dir=$(dirname "$POM")" >> "$GITHUB_OUTPUT"
+
       - uses: actions/setup-java@v5
         with:
           distribution: temurin
-          java-version: 21
+          java-version: '21'
           cache: maven
+          cache-dependency-path: ${{ steps.locate.outputs.dir }}/pom.xml
 
       - name: Build with Maven
-        run: |
-          for i in 1 2 3; do
-            mvn -B clean package -DskipTests && exit 0
-            echo "Сборка не удалась (попытка $i из 3), повторяю..."
-          done
-          echo "Сборка Maven не удалась после 3 попыток."
-          exit 1
-
-      - name: Verify jar
-        run: |
-          ls -l target/*.jar
-          test -n "$(ls target/*.jar 2>/dev/null)"
+        working-directory: ${{ steps.locate.outputs.dir }}
+        run: mvn -B -ntp clean package
 
       - name: Upload plugin jar
         uses: actions/upload-artifact@v4
         with:
-          name: plugin-jar
-          path: target/*.jar
+          name: RtpAuction
+          path: ${{ steps.locate.outputs.dir }}/target/*.jar
+          if-no-files-found: error
